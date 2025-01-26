@@ -1,0 +1,7 @@
+services:
+  audio-converter:
+    build: .
+    ports:
+      - "9001:9001"
+    volumes:
+      - /tmp:/tmp
