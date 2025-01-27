@@ -9,17 +9,11 @@ class AudioConversionService:
     async def convert_audio(
         input_file: UploadFile, 
         target_format: str = 'mp3', 
-        bitrate: str = '192k'
+        samplerate: str = '44100'
     ):
         # Create unique filename
         input_filename = f"/tmp/{input_file.filename}"
         output_filename = f"/tmp/{input_file.filename}-converted.{target_format}"
-        
-        
-        print('input_filename')
-        print(input_filename)
-        print('output_filename 1')
-        print(output_filename)
 
         # Save uploaded file
         with open(input_filename, "wb") as buffer:
@@ -29,14 +23,13 @@ class AudioConversionService:
         try:
             subprocess.run([
                 'ffmpeg', 
+                '-y',
                 '-i', input_filename, 
-                '-b:a', bitrate, 
-                '-vn',  # Ignore video
+                '-q:a', '7', # Audio quality i.e. bitrate
+                '-ar', samplerate, # Audio sample rate
+                '-ac', '2', # Audio channels
                 output_filename
             ], check=True)
-            
-            print('output_filename 2')
-            print(output_filename)
 
             return output_filename
         except subprocess.CalledProcessError as e:
