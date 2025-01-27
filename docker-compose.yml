@@ -1,5 +1,7 @@
 services:
   audio-converter:
+    env_file:
+      - .env
     build: .
     ports:
       - "9001:9001"
