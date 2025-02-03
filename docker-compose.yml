@@ -13,4 +13,4 @@ services:
 networks:
   proxy:
     external: true
-    name: npm_default
+    name: supabase_default
