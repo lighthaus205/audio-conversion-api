@@ -4,6 +4,6 @@ services:
       - .env
     build: .
     ports:
-      - "9001:9001"
+      - "127.0.0.1:9001:9001"
     volumes:
       - /tmp:/tmp
