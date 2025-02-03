@@ -11,5 +11,5 @@ services:
       - /tmp:/tmp
 
 networks:
-  supabase:
+  supabase_default:
     external: true
