@@ -5,5 +5,12 @@ services:
     build: .
     ports:
       - "127.0.0.1:9001:9001"
+    networks:
+      - proxy
     volumes:
       - /tmp:/tmp
+
+networks:
+  proxy:
+    external: true
+    name: npm_default
