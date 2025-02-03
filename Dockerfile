@@ -19,4 +19,4 @@ COPY ./app /app
 EXPOSE 9001
 
 # Run the application
-CMD ["uvicorn", "main:app", "--log-level", "debug", "--host", "127.0.0.1", "--port", "9001"]
+CMD ["uvicorn", "main:app", "--log-level", "debug", "--host", "localhost", "--port", "9001"]
