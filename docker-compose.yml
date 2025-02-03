@@ -6,11 +6,10 @@ services:
     ports:
       - "127.0.0.1:9001:9001"
     networks:
-      - proxy
+      - supabase_default
     volumes:
       - /tmp:/tmp
 
 networks:
-  proxy:
+  supabase:
     external: true
-    name: supabase_default
