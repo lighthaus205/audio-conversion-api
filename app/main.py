@@ -23,11 +23,12 @@ app = FastAPI()
 @app.post("/convert")
 async def convert_audio(
     file: UploadFile = File(...),
-    realease_experience_address: str = Form(...),
+    supabase_storage_path_to_folder: str = Form(...),
+    file_name_no_extension: str | None = Form(default=None),
     # conversion: ConversionRequest = None
 ):
-    if not realease_experience_address:
-        raise HTTPException(status_code=400, detail="No realease_experience_address provided")
+    if not supabase_storage_path_to_folder:
+        raise HTTPException(status_code=400, detail="No supabase_storage_path_to_folder provided")
     
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
@@ -42,7 +43,7 @@ async def convert_audio(
         with open(converted_path, 'rb') as f:
             bucket = "realease-experience-content"
             fileNameStem = Path(file.filename).stem
-            path = f"{realease_experience_address}/{fileNameStem}.mp3"
+            path = f"{supabase_storage_path_to_folder}/{file_name_no_extension if file_name_no_extension else fileNameStem}.mp3"
             response = supabase.storage.from_(bucket).upload(
                 file=f,
                 path=path,
