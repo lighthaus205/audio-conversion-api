@@ -25,7 +25,7 @@ app = FastAPI()
 async def convert_audio(
     convert_supabase_storage_path: str = Form(...),
     result_supabase_storage_path: str = Form(...),
-    # conversion: ConversionRequest = None
+    audio_quality: str = Form(default='8'),
 ):
     logger.debug(f"Received conversion request for path: {convert_supabase_storage_path}")
     logger.debug(f"Target path: {result_supabase_storage_path}")
@@ -33,6 +33,9 @@ async def convert_audio(
     if not convert_supabase_storage_path:
         logger.error("No convert_supabase_storage_path provided")
         raise HTTPException(status_code=400, detail="No convert_supabase_storage_path provided")
+
+    temp_input_path = None
+    converted_path = None
 
     try:
         # Fetch file from supabase
@@ -46,8 +49,22 @@ async def convert_audio(
         # Create a temporary file for the downloaded content
         temp_input_path = f"/tmp/{Path(convert_supabase_storage_path).name}"
         logger.debug(f"Saving downloaded file to: {temp_input_path}")
+        
+        # Write file in binary mode
         with open(temp_input_path, "wb") as f:
             f.write(file_content)
+            f.flush()
+            os.fsync(f.fileno())  # Ensure file is written to disk
+        
+        # Verify file was written
+        if not os.path.exists(temp_input_path):
+            raise HTTPException(status_code=500, detail="Failed to save temporary file")
+        
+        file_size = os.path.getsize(temp_input_path)
+        logger.debug(f"Downloaded file size: {file_size} bytes")
+        
+        if file_size == 0:
+            raise HTTPException(status_code=400, detail="Downloaded file is empty")
 
         # Create an UploadFile object for the conversion service
         file = UploadFile(
@@ -59,6 +76,7 @@ async def convert_audio(
         converted_path = await AudioConversionService.convert_audio(
             input_file=file,
             target_format='mp3',
+            audio_quality=audio_quality,
         )
         logger.debug(f"Audio conversion completed. Output path: {converted_path}")
         
@@ -66,7 +84,11 @@ async def convert_audio(
         logger.debug("Starting Supabase upload")
         with open(converted_path, 'rb') as f:
             bucket = "realease-experience-content"
+            # Ensure the result path has .mp3 extension
             path = result_supabase_storage_path
+            if not path.lower().endswith('.mp3'):
+                # If path doesn't end with .mp3, remove any existing extension and add .mp3
+                path = str(Path(path).with_suffix('.mp3'))
             logger.debug(f"Uploading to path: {path}")
             response = supabase.storage.from_(bucket).upload(
                 file=f,
@@ -76,21 +98,19 @@ async def convert_audio(
             public_url = supabase.storage.from_(bucket).get_public_url(path)
             logger.debug(f"Upload completed. Public URL: {public_url}")
 
-        # Cleanup
-        async def cleanup():
-            try:
-                if os.path.exists(converted_path):
-                    logger.debug(f"Cleaning up converted file: {converted_path}")
-                    os.remove(converted_path)
-                if os.path.exists(temp_input_path):
-                    logger.debug(f"Cleaning up temporary input file: {temp_input_path}")
-                    os.remove(temp_input_path)
-            except Exception as e:
-                logger.error(f"Error during cleanup: {e}")
-                
-        await cleanup()
         return public_url
 
     except Exception as e:
-        logger.error(f"Error: {str(e)}", exc_info=True)
+        logger.error(f"Error during conversion process: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Cleanup
+        try:
+            if temp_input_path and os.path.exists(temp_input_path):
+                logger.debug(f"Cleaning up temporary input file: {temp_input_path}")
+                os.remove(temp_input_path)
+            if converted_path and os.path.exists(converted_path):
+                logger.debug(f"Cleaning up converted file: {converted_path}")
+                os.remove(converted_path)
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
