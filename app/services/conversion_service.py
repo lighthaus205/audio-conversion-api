@@ -66,11 +66,17 @@ class AudioConversionService:
                 '-i', input_filename,  # Input file
                 '-map', '0:a:0',  # Select first audio stream
                 '-codec:a', 'libmp3lame',  # Use LAME MP3 encoder
-                '-q:a', audio_quality,  # Audio quality (VBR) - 0 best, 9 worst
+                '-q:a', audio_quality,  # VBR quality (0 best, 9 worst)
                 '-ar', samplerate,  # Audio sample rate
                 '-ac', '2',  # Audio channels (stereo)
+                '-compression_level', '0',  # Use maximum compression
                 '-map_metadata', '0',  # Copy metadata
                 '-id3v2_version', '3',  # Use ID3v2.3 tags for better compatibility
+                # VBR specific settings
+                '-b:a', '96k',  # Minimum bitrate
+                '-minrate', '96k',  # Force minimum bitrate
+                '-maxrate', '256k',  # Maximum bitrate ceiling
+                '-bufsize', '512k',  # VBR buffer size
                 output_filename
             ]
             logger.debug(f"FFmpeg command: {' '.join(ffmpeg_command)}")

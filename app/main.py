@@ -94,10 +94,10 @@ async def convert_audio(
                 file=f,
                 path=path,
                 file_options={
-                    "cache-control": "3600",
+                    "cacheControl": "3600",
                     "upsert": "true",
-                    "contentType": "audio/mpeg"  # Set correct MIME type for MP3
-                },
+                    "contentType": "audio/mpeg"
+                }
             )
             public_url = supabase.storage.from_(bucket).get_public_url(path)
             logger.debug(f"Upload completed. Public URL: {public_url}")
