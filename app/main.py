@@ -8,6 +8,7 @@ import logging
 from supabase import create_client, Client
 from pathlib import Path
 from app.logging_config import setup_logging
+import asyncio
 
 load_dotenv()
 
@@ -36,11 +37,15 @@ async def convert_audio(
 
     temp_input_path = None
     converted_path = None
+    loop = asyncio.get_event_loop()
 
     try:
         # Fetch file from supabase
         logger.debug("Downloading file from Supabase")
-        file_content = supabase.storage.from_("realease-experience-content").download(convert_supabase_storage_path)
+        file_content = await loop.run_in_executor(
+            None,
+            lambda: supabase.storage.from_("realease-experience-content").download(convert_supabase_storage_path)
+        )
         
         if not file_content:
             logger.error(f"File not found in supabase: {convert_supabase_storage_path}")
@@ -50,11 +55,12 @@ async def convert_audio(
         temp_input_path = f"/tmp/{Path(convert_supabase_storage_path).name}"
         logger.debug(f"Saving downloaded file to: {temp_input_path}")
         
-        # Write file in binary mode
-        with open(temp_input_path, "wb") as f:
-            f.write(file_content)
-            f.flush()
-            os.fsync(f.fileno())  # Ensure file is written to disk
+        # Write file in binary mode asynchronously
+        async with asyncio.Lock():  # Ensure thread-safe file operations
+            with open(temp_input_path, "wb") as f:
+                f.write(file_content)
+                f.flush()
+                os.fsync(f.fileno())
         
         # Verify file was written
         if not os.path.exists(temp_input_path):
@@ -82,25 +88,33 @@ async def convert_audio(
         
         # Upload file to supabase
         logger.debug("Starting Supabase upload")
-        with open(converted_path, 'rb') as f:
-            bucket = "realease-experience-content"
-            # Ensure the result path has .mp3 extension
-            path = result_supabase_storage_path
-            if not path.lower().endswith('.mp3'):
-                # If path doesn't end with .mp3, remove any existing extension and add .mp3
-                path = str(Path(path).with_suffix('.mp3'))
-            logger.debug(f"Uploading to path: {path}")
-            response = supabase.storage.from_(bucket).upload(
-                file=f,
-                path=path,
-                file_options={
-                    "cacheControl": "3600",
-                    "upsert": "true",
-                    "contentType": "audio/mpeg"
-                }
-            )
-            public_url = supabase.storage.from_(bucket).get_public_url(path)
-            logger.debug(f"Upload completed. Public URL: {public_url}")
+        async with asyncio.Lock():  # Ensure thread-safe file operations
+            with open(converted_path, 'rb') as f:
+                bucket = "realease-experience-content"
+                # Ensure the result path has .mp3 extension
+                path = result_supabase_storage_path
+                if not path.lower().endswith('.mp3'):
+                    path = str(Path(path).with_suffix('.mp3'))
+                logger.debug(f"Uploading to path: {path}")
+                
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: supabase.storage.from_(bucket).upload(
+                        path=path,
+                        file=f,
+                        file_options={
+                            "cacheControl": "3600",
+                            "upsert": "true",
+                            "contentType": "audio/mpeg"
+                        }
+                    )
+                )
+                
+                public_url = await loop.run_in_executor(
+                    None,
+                    lambda: supabase.storage.from_(bucket).get_public_url(path)
+                )
+                logger.debug(f"Upload completed. Public URL: {public_url}")
 
         return public_url
 
@@ -108,13 +122,13 @@ async def convert_audio(
         logger.error(f"Error during conversion process: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        # Cleanup
+        # Cleanup using async operations
         try:
             if temp_input_path and os.path.exists(temp_input_path):
                 logger.debug(f"Cleaning up temporary input file: {temp_input_path}")
-                os.remove(temp_input_path)
+                await loop.run_in_executor(None, os.remove, temp_input_path)
             if converted_path and os.path.exists(converted_path):
                 logger.debug(f"Cleaning up converted file: {converted_path}")
-                os.remove(converted_path)
+                await loop.run_in_executor(None, os.remove, converted_path)
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")

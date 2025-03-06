@@ -3,6 +3,7 @@ import uuid
 import shutil
 import subprocess
 import logging
+import asyncio
 from fastapi import UploadFile
 from pathlib import Path
 
@@ -33,19 +34,17 @@ class AudioConversionService:
         # Create unique filename with UUID to avoid conflicts
         unique_id = str(uuid.uuid4())
         input_filename = f"/tmp/{unique_id}-{input_file.filename}"
-        # Always use .mp3 extension for output file
         output_filename = f"/tmp/{unique_id}-converted.mp3"
         logger.debug(f"Input file path: {input_filename}")
         logger.debug(f"Output file path: {output_filename}")
 
         try:
-            # Save uploaded file
+            # Save uploaded file asynchronously
             logger.debug("Saving uploaded file")
-            with open(input_filename, "wb") as buffer:
-                # Read in chunks to handle large files
-                while content := await input_file.read(8192):
-                    buffer.write(content)
-            buffer.close()  # Ensure file is closed
+            async with asyncio.Lock():  # Ensure thread-safe file operations
+                with open(input_filename, "wb") as buffer:
+                    while content := await input_file.read(8192):
+                        buffer.write(content)
             logger.debug("File saved successfully")
 
             # Verify file exists and has size
@@ -58,44 +57,45 @@ class AudioConversionService:
             if file_size == 0:
                 raise ValueError("Input file is empty")
 
-            # Perform conversion using FFmpeg with optimized settings
-            logger.debug("Starting FFmpeg conversion")
+            # Run FFmpeg in a thread pool to avoid blocking
+            loop = asyncio.get_event_loop()
             ffmpeg_command = [
                 'ffmpeg',
-                '-y',  # Overwrite output file
-                '-i', input_filename,  # Input file
-                '-map', '0:a:0',  # Select first audio stream
-                '-codec:a', 'libmp3lame',  # Use LAME MP3 encoder
-                '-q:a', audio_quality,  # VBR quality (0 best, 9 worst)
-                '-ar', samplerate,  # Audio sample rate
-                '-ac', '2',  # Audio channels (stereo)
-                '-compression_level', '0',  # Use maximum compression
-                '-map_metadata', '0',  # Copy metadata
-                '-id3v2_version', '3',  # Use ID3v2.3 tags for better compatibility
-                # VBR specific settings
-                '-b:a', '96k',  # Minimum bitrate
-                '-minrate', '96k',  # Force minimum bitrate
-                '-maxrate', '256k',  # Maximum bitrate ceiling
-                '-bufsize', '512k',  # VBR buffer size
+                '-y',
+                '-i', input_filename,
+                '-map', '0:a:0',
+                '-codec:a', 'libmp3lame',
+                '-q:a', audio_quality,
+                '-ar', samplerate,
+                '-ac', '2',
+                '-compression_level', '0',
+                '-map_metadata', '0',
+                '-id3v2_version', '3',
+                '-b:a', '96k',
+                '-minrate', '96k',
+                '-maxrate', '256k',
+                '-bufsize', '512k',
                 output_filename
             ]
-            logger.debug(f"FFmpeg command: {' '.join(ffmpeg_command)}")
+            logger.debug(f"Starting FFmpeg conversion: {' '.join(ffmpeg_command)}")
             
-            # Run FFmpeg with progress monitoring
-            result = subprocess.run(
-                ffmpeg_command,
-                check=True,
-                capture_output=True,
-                text=True
+            # Run FFmpeg in thread pool
+            result = await loop.run_in_executor(
+                None,
+                lambda: subprocess.run(
+                    ffmpeg_command,
+                    check=True,
+                    capture_output=True,
+                    text=True
+                )
             )
             
-            # Check FFmpeg output for warnings or information
             if result.stderr:
                 logger.debug(f"FFmpeg output: {result.stderr}")
             
             logger.debug("FFmpeg conversion completed successfully")
             
-            # Verify output file exists and has size
+            # Verify output file
             if not os.path.exists(output_filename):
                 raise ValueError("Output file was not created")
             
@@ -105,7 +105,7 @@ class AudioConversionService:
             if output_size == 0:
                 raise ValueError("Output file is empty")
 
-            # Verify the output file is a valid MP3
+            # Verify MP3 in thread pool
             verify_command = [
                 'ffmpeg',
                 '-v', 'error',
@@ -113,10 +113,13 @@ class AudioConversionService:
                 '-f', 'null',
                 '-'
             ]
-            verify_result = subprocess.run(
-                verify_command,
-                capture_output=True,
-                text=True
+            verify_result = await loop.run_in_executor(
+                None,
+                lambda: subprocess.run(
+                    verify_command,
+                    capture_output=True,
+                    text=True
+                )
             )
             
             if verify_result.stderr:
@@ -137,6 +140,6 @@ class AudioConversionService:
             try:
                 if os.path.exists(input_filename):
                     logger.debug(f"Cleaning up input file: {input_filename}")
-                    os.remove(input_filename)
+                    await loop.run_in_executor(None, os.remove, input_filename)
             except Exception as e:
                 logger.error(f"Error cleaning up input file: {e}")
