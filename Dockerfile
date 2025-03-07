@@ -13,10 +13,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY ./app /app
+COPY . /app
 
 # Expose port
 EXPOSE 9001
 
 # Run the application
-CMD ["uvicorn", "app.main:app", "--log-level", "debug", "--host", "0.0.0.0", "--port", "9001"]
+CMD ["uvicorn", "app.main:app", "--log-level", "debug", "--host", "0.0.0.0", "--port", "9001", "--workers", "4"]
