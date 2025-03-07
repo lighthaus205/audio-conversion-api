@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Configuration variables
-SERVICE_NAME="audio-converter-api"  # Name of the service in docker-compose.yml
+SERVICE_NAME="audio-converter"  # Corrected to match docker-compose.yml
 
 # Colors for output
 GREEN='\033[0;32m'
