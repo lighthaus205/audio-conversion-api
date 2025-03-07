@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 from fastapi.logger import logger
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi.responses import JSONResponse
 from app.services.conversion_service import AudioConversionService
 # from models.conversion_request import ConversionRequest
 import os
@@ -116,11 +117,33 @@ async def convert_audio(
                 )
                 logger.debug(f"Upload completed. Public URL: {public_url}")
 
-        return public_url
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "message": "Audio file converted and uploaded successfully",
+                "data": {
+                    "public_url": public_url,
+                    "path": path,
+                    "bucket": bucket,
+                    "content_type": "audio/mpeg"
+                }
+            }
+        )
 
     except Exception as e:
         logger.error(f"Error during conversion process: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "message": str(e),
+                "error": {
+                    "type": type(e).__name__,
+                    "detail": str(e)
+                }
+            }
+        )
     finally:
         # Cleanup using async operations
         try:
