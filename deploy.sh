@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Configuration variables
-SERVICE_NAME="audio-converter"  # Corrected to match docker-compose.yml
+SERVICE_NAME="audio-converter"  # Matches docker-compose.yml
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -33,23 +33,19 @@ if ! docker info &> /dev/null; then
     error "Docker daemon is not running. Please start Docker and try again."
 fi
 
-# Step 1: Stop the existing service if running
-log "Stopping existing service: $SERVICE_NAME"
-docker compose stop "$SERVICE_NAME" || log "No running service found to stop"
+# Step 1: Stop and remove all containers, images, volumes, and orphans
+log "Stopping and cleaning up all Docker resources"
+docker compose down --rmi all --volumes --remove-orphans || log "No resources found to clean up"
 
-# Step 2: Remove the existing container (optional, Compose will handle it)
-log "Removing existing container for: $SERVICE_NAME"
-docker compose rm -f "$SERVICE_NAME" || log "No container found to remove"
-
-# Step 3: Build the updated image
+# Step 2: Build the updated image
 log "Building updated Docker image for: $SERVICE_NAME"
 docker compose build --no-cache "$SERVICE_NAME" || error "Failed to build Docker image"
 
-# Step 4: Start the service
+# Step 3: Start the service
 log "Starting service: $SERVICE_NAME"
 docker compose up -d "$SERVICE_NAME" || error "Failed to start service"
 
-# Step 5: Verify the service is running
+# Step 4: Verify the service is running
 log "Verifying service status"
 sleep 2 # Give it a moment to start
 if docker compose ps --services --filter "status=running" | grep -q "^${SERVICE_NAME}$"; then
@@ -58,7 +54,7 @@ else
     error "Service $SERVICE_NAME failed to start. Check logs with 'docker compose logs $SERVICE_NAME'"
 fi
 
-# Step 6: Test the application (optional)
+# Step 5: Test the application (optional)
 log "Testing application at http://localhost:9001"
 if curl -s "http://localhost:9001" > /dev/null; then
     log "Application is responding"
@@ -66,7 +62,7 @@ else
     log "Warning: Application might not be responding yet. Check with 'docker compose logs $SERVICE_NAME'"
 fi
 
-# Step 7: Clean up unused images (optional)
+# Step 6: Clean up unused images (optional)
 log "Cleaning up unused Docker images"
 docker image prune -f
 
