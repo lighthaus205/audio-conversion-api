@@ -4,6 +4,8 @@ import shutil
 import subprocess
 import logging
 import asyncio
+import json
+import re
 from fastapi import UploadFile
 from pathlib import Path
 
@@ -35,6 +37,7 @@ class AudioConversionService:
         unique_id = str(uuid.uuid4())
         input_filename = f"/tmp/{unique_id}-{input_file.filename}"
         output_filename = f"/tmp/{unique_id}-converted.mp3"
+        loudness_log = f"/tmp/{unique_id}-loudness.txt"
         logger.debug(f"Input file path: {input_filename}")
         logger.debug(f"Output file path: {output_filename}")
 
@@ -57,8 +60,67 @@ class AudioConversionService:
             if file_size == 0:
                 raise ValueError("Input file is empty")
 
-            # Run FFmpeg in a thread pool to avoid blocking
+            # Run FFmpeg to analyze loudness using ebur128 filter
             loop = asyncio.get_event_loop()
+            logger.debug("Analyzing audio loudness with ebur128 filter")
+            
+            # First, analyze the audio with ebur128 filter
+            loudness_command = [
+                'ffmpeg',
+                '-i', input_filename,
+                '-filter_complex', 'ebur128=peak=true:meter=18',
+                '-f', 'null',
+                '-'
+            ]
+            
+            loudness_result = await loop.run_in_executor(
+                None,
+                lambda: subprocess.run(
+                    loudness_command,
+                    check=True,
+                    capture_output=True,
+                    text=True
+                )
+            )
+            
+            # Extract loudness information from stderr output
+            loudness_data = {
+                "integrated_loudness": "N/A",
+                "true_peak": "N/A",
+                "loudness_range": "N/A",
+                "threshold": "N/A"
+            }
+            
+            try:
+                # Parse the ebur128 output
+                output = loudness_result.stderr
+                
+                # Extract integrated loudness (I)
+                integrated_match = re.search(r'I:\s*([-\d.]+)\s*LUFS', output)
+                if integrated_match:
+                    loudness_data["integrated_loudness"] = float(integrated_match.group(1))
+                
+                # Extract true peak
+                true_peak_match = re.search(r'Peak:\s*([-\d.]+)\s*dBFS', output)
+                if true_peak_match:
+                    loudness_data["true_peak"] = float(true_peak_match.group(1))
+                
+                # Extract LRA (Loudness Range)
+                lra_match = re.search(r'LRA:\s*([-\d.]+)\s*LU', output)
+                if lra_match:
+                    loudness_data["loudness_range"] = float(lra_match.group(1))
+                
+                # Extract threshold
+                threshold_match = re.search(r'Threshold:\s*([-\d.]+)\s*LUFS', output)
+                if threshold_match:
+                    loudness_data["threshold"] = float(threshold_match.group(1))
+                
+                logger.debug(f"Loudness analysis results: {loudness_data}")
+            except Exception as e:
+                logger.error(f"Error parsing loudness data: {e}")
+                logger.debug(f"Raw loudness output: {output}")
+
+            # Run FFmpeg in a thread pool to avoid blocking
             ffmpeg_command = [
                 'ffmpeg',
                 '-y',
@@ -126,7 +188,7 @@ class AudioConversionService:
                 logger.error(f"Output file verification failed: {verify_result.stderr}")
                 raise ValueError("Generated MP3 file is invalid or corrupted")
 
-            return output_filename
+            return output_filename, loudness_data
             
         except subprocess.CalledProcessError as e:
             logger.error(f"FFmpeg conversion failed: {e.stderr}")

@@ -80,7 +80,7 @@ async def convert_audio(
         )
 
         logger.debug("Starting audio conversion")
-        converted_path = await AudioConversionService.convert_audio(
+        converted_path, loudness_data = await AudioConversionService.convert_audio(
             input_file=file,
             target_format='mp3',
             audio_quality=audio_quality,
@@ -117,6 +117,25 @@ async def convert_audio(
                 )
                 logger.debug(f"Upload completed. Public URL: {public_url}")
 
+        # Extract key loudness metrics - keep as numeric values
+        audio_metrics = {
+            "integrated_loudness": loudness_data.get("integrated_loudness", "N/A"),
+            "true_peak": loudness_data.get("true_peak", "N/A"),
+            "loudness_range": loudness_data.get("loudness_range", "N/A"),
+            "threshold": loudness_data.get("threshold", "N/A")
+        }
+        
+        # Add units to the metrics for better readability in a separate object
+        audio_metrics_formatted = {
+            "integrated_loudness": f"{audio_metrics['integrated_loudness']} LUFS" if audio_metrics['integrated_loudness'] != "N/A" else "N/A",
+            "true_peak": f"{audio_metrics['true_peak']} dBFS" if audio_metrics['true_peak'] != "N/A" else "N/A",
+            "loudness_range": f"{audio_metrics['loudness_range']} LU" if audio_metrics['loudness_range'] != "N/A" else "N/A",
+            "threshold": f"{audio_metrics['threshold']} LUFS" if audio_metrics['threshold'] != "N/A" else "N/A"
+        }
+        
+        logger.debug(f"Audio metrics: {audio_metrics}")
+        logger.debug(f"Formatted metrics: {audio_metrics_formatted}")
+
         return JSONResponse(
             status_code=200,
             content={
@@ -126,7 +145,9 @@ async def convert_audio(
                     "public_url": public_url,
                     "path": path,
                     "bucket": bucket,
-                    "content_type": "audio/mpeg"
+                    "content_type": "audio/mpeg",
+                    "audio_metrics": audio_metrics,  # Numeric values
+                    "audio_metrics_formatted": audio_metrics_formatted  # Values with units
                 }
             }
         )
