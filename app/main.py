@@ -3,6 +3,7 @@ from fastapi.logger import logger
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.responses import JSONResponse
 from app.services.conversion_service import AudioConversionService
+from app.services.environment_hdri_conversion import EnvironmentHdriConversionService
 # from models.conversion_request import ConversionRequest
 import os
 import logging
@@ -10,6 +11,9 @@ from supabase import create_client, Client
 from pathlib import Path
 from app.logging_config import setup_logging
 import asyncio
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+import shutil
 
 load_dotenv()
 
@@ -21,7 +25,18 @@ url: str = os.environ.get("SUPABASE_URL")
 key: str = os.environ.get("SUPABASE_SERVICE_KEY")
 supabase: Client = create_client(url, key)
 
+# Create FastAPI app with unlimited file size
 app = FastAPI()
+
+# Add middleware to handle large files
+class LargeFileMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path in ["/convert_environment_hdri", "/convert"]:
+            # Remove any content length limits for these endpoints
+            request._body_size_limit = None
+        return await call_next(request)
+
+app.add_middleware(LargeFileMiddleware)
 
 @app.post("/convert")
 async def convert_audio(
@@ -176,3 +191,139 @@ async def convert_audio(
                 await loop.run_in_executor(None, os.remove, converted_path)
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
+
+
+
+@app.post("/convert_environment_hdri")
+async def convert_environment_hdri(
+    file: UploadFile = File(...),
+    result_supabase_storage_path: str = Form(...),
+):
+    """
+    Convert an environment HDRI file (EXR format) and upload to Supabase.
+    
+    Args:
+        file: The EXR file to convert
+        result_supabase_storage_path: The path in Supabase storage where the result will be stored
+        
+    Returns:
+        JSON response with the public URL of the converted file
+    """
+    logger.debug(f"Received environment HDRI conversion request for file: {file.filename}")
+    
+    # Validate file extension
+    file_ext = Path(file.filename).suffix.lower()
+    if file_ext not in EnvironmentHdriConversionService.SUPPORTED_FORMATS:
+        logger.error(f"Unsupported file format: {file_ext}")
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "error",
+                "message": f"Unsupported file format: {file_ext}. Supported formats are: {', '.join(EnvironmentHdriConversionService.SUPPORTED_FORMATS)}"
+            }
+        )
+    
+    temp_files = None
+    loop = asyncio.get_event_loop()
+
+    try:
+        # Convert the HDRI file
+        logger.debug("Starting environment HDRI conversion")
+        converted_files, metadata = await EnvironmentHdriConversionService.convert(
+            input_file=file,
+        )
+        
+        if not converted_files:
+            logger.error("HDRI conversion failed: No output files generated")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "status": "error",
+                    "message": "HDRI conversion failed: No output files generated"
+                }
+            )
+            
+        logger.debug(f"HDRI conversion completed. Output files: {converted_files}")
+        temp_files = metadata.get('temp_files', {})
+        
+        # Upload files to Supabase
+        uploaded_files = []
+        
+        for converted_path in converted_files:
+            file_name = os.path.basename(converted_path)
+            file_path = f"{result_supabase_storage_path}"
+            
+            logger.debug(f"Uploading to path: {file_path}")
+            
+            async with asyncio.Lock():  # Ensure thread-safe file operations
+                with open(converted_path, 'rb') as f:
+                    bucket = "realease-experience-content"
+                    
+                    response = await loop.run_in_executor(
+                        None,
+                        lambda: supabase.storage.from_(bucket).upload(
+                            path=file_path,
+                            file=f,
+                            file_options={
+                                "cacheControl": "3600",
+                                "upsert": "true",
+                                "contentType": "image/x-exr"
+                            }
+                        )
+                    )
+                    
+                    public_url = await loop.run_in_executor(
+                        None,
+                        lambda: supabase.storage.from_(bucket).get_public_url(file_path)
+                    )
+                    
+                    uploaded_files.append({
+                        "filename": file_name,
+                        "path": file_path,
+                        "public_url": public_url
+                    })
+                    
+                    logger.debug(f"Upload completed. Public URL: {public_url}")
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "message": "Environment HDRI files converted and uploaded successfully",
+                "data": {
+                    "uploaded_files": uploaded_files,
+                    "metadata": metadata
+                }
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Error during HDRI conversion process: {str(e)}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "message": str(e),
+                "error": {
+                    "type": type(e).__name__,
+                    "detail": str(e)
+                }
+            }
+        )
+    finally:
+        # Clean up temporary files after successful upload
+        if temp_files:
+            try:
+                input_file = temp_files.get('input_file')
+                output_dir = temp_files.get('output_dir')
+                
+                if input_file and os.path.exists(input_file):
+                    logger.debug(f"Cleaning up input file: {input_file}")
+                    await loop.run_in_executor(None, os.remove, input_file)
+                    
+                if output_dir and os.path.exists(output_dir):
+                    logger.debug(f"Cleaning up output directory: {output_dir}")
+                    await loop.run_in_executor(None, lambda: shutil.rmtree(output_dir))
+                    
+            except Exception as e:
+                logger.error(f"Error during cleanup: {e}")
